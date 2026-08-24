@@ -1,0 +1,56 @@
+name: 'PR Bypass Auto-Merge'
+description: 'Allows specified automation users to bypass PR checks and auto-merge PRs when a configured label is present'
+author: 'Elastic'
+
+branding:
+  icon: 'git-merge'
+  color: 'blue'
+
+inputs:
+  token:
+    description: >
+      GitHub token with checks:write, pull-requests:write, and contents:write permissions.
+      Use GITHUB_TOKEN with those permissions declared in the workflow.
+    required: true
+  approve-token:
+    description: >
+      A separate GitHub token (PAT or GitHub App token) used to approve the PR.
+      Defaults to `token`. For required PR approvals, this must belong to a different
+      user than the PR creator — GITHUB_TOKEN cannot approve PRs it triggered.
+    required: false
+    default: ''
+  allowed-users:
+    description: 'Comma-separated list of GitHub usernames whose PRs can be bypassed'
+    required: true
+  bypass-label:
+    description: 'Label that must be present on the PR to trigger the bypass'
+    required: false
+    default: 'auto-merge-bypass'
+  required-checks:
+    description: >
+      Comma-separated list of check names to explicitly mark as successful.
+      Use this for required branch protection checks that have not yet run or are expected to fail.
+    required: false
+    default: ''
+  merge-method:
+    description: 'Method used to merge the PR: merge, squash, or rebase'
+    required: false
+    default: 'squash'
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+
+    - name: Run bypass
+      shell: bash
+      run: node "${{ github.action_path }}/src/index.ts"
+      env:
+        INPUT_TOKEN: ${{ inputs.token }}
+        INPUT_APPROVE_TOKEN: ${{ inputs.approve-token }}
+        INPUT_ALLOWED_USERS: ${{ inputs.allowed-users }}
+        INPUT_BYPASS_LABEL: ${{ inputs.bypass-label }}
+        INPUT_REQUIRED_CHECKS: ${{ inputs.required-checks }}
+        INPUT_MERGE_METHOD: ${{ inputs.merge-method }}

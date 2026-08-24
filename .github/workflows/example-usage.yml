@@ -1,0 +1,45 @@
+# Copy this file into a consuming repo's .github/workflows/ directory.
+# Adjust the allowed-users list, bypass-label, and required-checks to match your setup.
+
+name: PR Auto-Bypass
+
+on:
+  pull_request:
+    types: [opened, labeled]
+
+permissions:
+  checks: write
+  pull-requests: write
+  contents: write
+
+jobs:
+  bypass:
+    runs-on: ubuntu-latest
+    # Skip the job entirely unless both conditions are met.
+    # Keep these values in sync with the action inputs below.
+    if: >-
+      contains(fromJSON('["brianseeders"]'), github.event.pull_request.user.login) &&
+      contains(github.event.pull_request.labels.*.name, 'auto-merge-bypass')
+    steps:
+      - uses: elastic/es-pr-bypass@main
+        with:
+          # GITHUB_TOKEN covers checks:write, pull-requests:write, contents:write
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+          # Optional: a separate PAT or App token used as the approver identity.
+          # If omitted, the action approves with GITHUB_TOKEN (may not satisfy
+          # branch protection rules that require a human approval).
+          approve-token: ${{ secrets.PR_BYPASS_APPROVE_TOKEN }}
+
+          # Must match the fromJSON list in the if: condition above
+          allowed-users: 'brianseeders'
+
+          # Must match the label name in the if: condition above
+          bypass-label: 'auto-merge-bypass'
+
+          # Branch protection checks to explicitly mark successful.
+          # These are created/overridden even if they haven't run yet.
+          required-checks: 'test-check'
+
+          # merge, squash, or rebase
+          merge-method: 'squash'
