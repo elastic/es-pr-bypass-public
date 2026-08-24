@@ -83,31 +83,20 @@ async function createSuccessCheckRun(token: string, owner: string, repo: string,
   });
 }
 
-async function createSuccessCommitStatus(
-  token: string,
-  owner: string,
-  repo: string,
-  sha: string,
-  context: string
-): Promise<void> {
+async function createSuccessCommitStatus(token: string, owner: string, repo: string, sha: string, context: string): Promise<void> {
   await githubFetch(token, `/repos/${owner}/${repo}/statuses/${sha}`, {
     method: 'POST',
     body: { state: 'success', context, description: 'Bypassed by pr-bypass action.' },
   });
 }
 
-async function listNonSuccessfulCommitStatuses(
-  token: string,
-  owner: string,
-  repo: string,
-  sha: string
-): Promise<string[]> {
+async function listNonSuccessfulCommitStatuses(token: string, owner: string, repo: string, sha: string): Promise<string[]> {
   const data = await githubFetch<{
     state: string;
     statuses: Array<{ state: string; context: string }>;
   }>(token, `/repos/${owner}/${repo}/commits/${sha}/status`);
 
-  return data.statuses.filter(s => s.state !== 'success').map(s => s.context);
+  return data.statuses.filter((s) => s.state !== 'success').map((s) => s.context);
 }
 
 async function approvePR(token: string, owner: string, repo: string, prNumber: number): Promise<void> {
@@ -254,11 +243,11 @@ async function run(): Promise<void> {
     }
   }
 
-  info(`Waiting for PR #${prNumber} to become mergeable...`);
-  await waitForMergeable(token, owner, repo, prNumber);
-
   info(`Approving PR #${prNumber}`);
   await approvePR(approveToken, owner, repo, prNumber);
+
+  info(`Waiting for PR #${prNumber} to become mergeable...`);
+  await waitForMergeable(token, owner, repo, prNumber);
 
   info(`Merging PR #${prNumber} (method: ${mergeMethod})`);
   const result = await mergePR(token, owner, repo, prNumber, mergeMethod);
