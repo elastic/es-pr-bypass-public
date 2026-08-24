@@ -26,10 +26,11 @@ inputs:
     description: 'Label that must be present on the PR to trigger the bypass'
     required: false
     default: 'auto-merge-bypass'
-  required-checks:
+  required-commit-statuses:
     description: >
-      Comma-separated list of check names to explicitly mark as successful.
-      Use this for required branch protection checks that have not yet run or are expected to fail.
+      Comma-separated list of commit status contexts to explicitly create as successful.
+      Use this for required branch protection statuses that have not yet run or are expected to fail.
+      Non-successful check runs and commit statuses are also overridden automatically.
     required: false
     default: ''
   merge-method:
@@ -52,5 +53,5 @@ runs:
         INPUT_APPROVE_TOKEN: ${{ inputs.approve-token }}
         INPUT_ALLOWED_USERS: ${{ inputs.allowed-users }}
         INPUT_BYPASS_LABEL: ${{ inputs.bypass-label }}
-        INPUT_REQUIRED_CHECKS: ${{ inputs.required-checks }}
+        INPUT_REQUIRED_COMMIT_STATUSES: ${{ inputs.required-commit-statuses }}
         INPUT_MERGE_METHOD: ${{ inputs.merge-method }}

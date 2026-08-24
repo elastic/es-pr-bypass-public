@@ -1,5 +1,5 @@
 # Copy this file into a consuming repo's .github/workflows/ directory.
-# Adjust the allowed-users list, bypass-label, and required-checks to match your setup.
+# Adjust the allowed-users list, bypass-label, and required-commit-statuses to match your setup.
 
 name: PR Auto-Bypass
 
@@ -37,9 +37,10 @@ jobs:
           # Must match the label name in the if: condition above
           bypass-label: 'auto-merge-bypass'
 
-          # Branch protection checks to explicitly mark successful.
-          # These are created/overridden even if they haven't run yet.
-          required-checks: 'test-check'
+          # Commit status contexts to explicitly mark successful.
+          # These are created even if they haven't run yet.
+          # Non-successful check runs and commit statuses are overridden automatically.
+          required-commit-statuses: 'test-check'
 
           # merge, squash, or rebase
           merge-method: 'squash'
