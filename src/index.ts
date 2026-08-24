@@ -110,43 +110,6 @@ async function listNonSuccessfulCommitStatuses(
   return data.statuses.filter(s => s.state !== 'success').map(s => s.context);
 }
 
-// Directly patch the running job's own check run to success so it doesn't hold the PR blocked.
-// This handles the self-referential case where the bypass job is itself a required check —
-// the job is in_progress when it tries to merge, making mergeable_state permanently 'blocked'.
-async function patchCurrentJobCheckRunToSuccess(
-  token: string,
-  owner: string,
-  repo: string
-): Promise<void> {
-  const runId = process.env.GITHUB_RUN_ID;
-  if (!runId) return;
-
-  const data = await githubFetch<{
-    jobs: Array<{ id: number; name: string; status: string }>;
-  }>(token, `/repos/${owner}/${repo}/actions/runs/${runId}/jobs`);
-
-  // GITHUB_JOB is the YAML job key; matches job.name when no custom name: is set.
-  // Fall back to the single in-progress job to handle custom job name: values.
-  const jobKey = process.env.GITHUB_JOB ?? '';
-  const inProgress = data.jobs.filter(j => j.status === 'in_progress');
-  const job = data.jobs.find(j => j.name === jobKey) ?? (inProgress.length === 1 ? inProgress[0] : undefined);
-
-  if (!job) {
-    info('Could not identify current job check run — skipping self-patch');
-    return;
-  }
-
-  info(`Patching current job check run "${job.name}" (id: ${job.id}) to success`);
-  await githubFetch(token, `/repos/${owner}/${repo}/check-runs/${job.id}`, {
-    method: 'PATCH',
-    body: {
-      status: 'completed',
-      conclusion: 'success',
-      output: { title: 'Bypassed', summary: 'PR bypass in progress — check marked successful to allow merging.' },
-    },
-  });
-}
-
 async function approvePR(token: string, owner: string, repo: string, prNumber: number): Promise<void> {
   await githubFetch(token, `/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, {
     method: 'POST',
@@ -290,8 +253,6 @@ async function run(): Promise<void> {
       await createSuccessCommitStatus(token, owner, repo, headSha, context);
     }
   }
-
-  await patchCurrentJobCheckRunToSuccess(token, owner, repo);
 
   info(`Waiting for PR #${prNumber} to become mergeable...`);
   await waitForMergeable(token, owner, repo, prNumber);

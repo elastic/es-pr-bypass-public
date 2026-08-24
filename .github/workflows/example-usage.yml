@@ -17,6 +17,11 @@ permissions:
 jobs:
   bypass:
     runs-on: ubuntu-latest
+    # IMPORTANT: Do NOT add this job's name ("bypass") to the repo's required branch protection
+    # checks. This job is in_progress while it runs the merge — if it were a required check,
+    # the PR would be permanently blocked waiting for itself to finish. The action overrides
+    # all OTHER required checks; this job should be allowed to run unrestricted.
+    #
     # Skip the job entirely unless both conditions are met.
     # Keep these values in sync with the action inputs below.
     if: >-
