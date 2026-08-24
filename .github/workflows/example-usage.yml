@@ -8,6 +8,7 @@ on:
     types: [opened, labeled]
 
 permissions:
+  actions: write
   checks: write
   pull-requests: write
   contents: write
