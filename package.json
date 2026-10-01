@@ -2,12 +2,15 @@
   "name": "github-pr-bypass",
   "version": "1.0.0",
   "description": "GitHub Action: bypass PR checks and auto-merge for specified automation users",
+  "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.4.0"
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
   },
   "engines": {
     "node": ">=24"
