@@ -124,4 +124,11 @@ describe('GitHubClient read endpoints', () => {
 
     expect(await client.getMergeableState(7)).toBe('clean');
   });
+
+  it('getPullRequest returns the live state and label names', async () => {
+    const { client, fetchFn } = makeClient(jsonResponse({ state: 'open', labels: [{ name: 'a' }, { name: 'b' }], mergeable_state: 'clean' }));
+
+    expect(await client.getPullRequest(7)).toEqual({ state: 'open', labels: ['a', 'b'] });
+    expect(call(fetchFn).url).toBe('https://api.github.com/repos/acme/widgets/pulls/7');
+  });
 });

@@ -4,6 +4,8 @@ import type { CheckRun, CommitStatus, GitHubClient, MergeMethod } from './github
 
 export interface Config {
   allowedUsers: string[];
+  // Users permitted to add the bypass label (the event sender).
+  allowedLabelers: string[];
   bypassLabel: string;
   requiredCommitStatuses: string[];
   mergeMethod: MergeMethod;
@@ -38,10 +40,14 @@ export function readInputs(env: NodeJS.ProcessEnv): Inputs {
     throw new Error(`Input 'merge-method' must be one of ${MERGE_METHODS.join(', ')} (got "${mergeMethod}")`);
   }
 
+  const allowedUsers = parseList(getInput(env, 'allowed-users', true));
+  const allowedLabelers = parseList(getInput(env, 'allowed-labelers'));
+
   return {
     token,
     approveToken: getInput(env, 'approve-token') || token,
-    allowedUsers: parseList(getInput(env, 'allowed-users', true)),
+    allowedUsers,
+    allowedLabelers: allowedLabelers.length > 0 ? allowedLabelers : allowedUsers,
     bypassLabel: getInput(env, 'bypass-label') || 'auto-merge-bypass',
     requiredCommitStatuses: parseList(getInput(env, 'required-commit-statuses')),
     mergeMethod: mergeMethod as MergeMethod,
@@ -62,6 +68,10 @@ export interface PullRequestInfo {
   headSha: string;
   labels: string[];
   state: string;
+  // Label whose addition triggered this run (`event.label`), or null for non-labeled events.
+  triggerLabel: string | null;
+  // User who triggered this run (`event.sender`), i.e. who added the label.
+  sender: string;
 }
 
 export function parsePullRequest(event: any): PullRequestInfo | null {
@@ -73,12 +83,16 @@ export function parsePullRequest(event: any): PullRequestInfo | null {
     headSha: pr.head.sha,
     labels: (pr.labels ?? []).map((l: { name: string }) => l.name),
     state: pr.state,
+    triggerLabel: event.label?.name ?? null,
+    sender: event.sender?.login ?? '',
   };
 }
 
 export type Eligibility = { eligible: true } | { eligible: false; reason: string };
 
-export function checkEligibility(pr: PullRequestInfo, config: Pick<Config, 'allowedUsers' | 'bypassLabel'>): Eligibility {
+export type EligibilityConfig = Pick<Config, 'allowedUsers' | 'allowedLabelers' | 'bypassLabel'>;
+
+export function checkEligibility(pr: PullRequestInfo, config: EligibilityConfig): Eligibility {
   if (pr.state !== 'open') {
     return { eligible: false, reason: `PR is not open (state: ${pr.state})` };
   }
@@ -87,6 +101,14 @@ export function checkEligibility(pr: PullRequestInfo, config: Pick<Config, 'allo
   }
   if (!pr.labels.includes(config.bypassLabel)) {
     return { eligible: false, reason: `Bypass label "${config.bypassLabel}" not found on PR` };
+  }
+  // Only the act of adding the bypass label may trigger a bypass. Otherwise, while the label is present,
+  // adding any other label would re-run the bypass against whatever commit is now at the head.
+  if (pr.triggerLabel !== config.bypassLabel) {
+    return { eligible: false, reason: `Run was not triggered by adding the bypass label (trigger label: "${pr.triggerLabel ?? 'none'}")` };
+  }
+  if (!config.allowedLabelers.includes(pr.sender)) {
+    return { eligible: false, reason: `Bypass label was added by "${pr.sender}", who is not in the allowed labelers list` };
   }
   return { eligible: true };
 }
@@ -99,6 +121,17 @@ export function selectChecksToOverride(runs: CheckRun[]): CheckRun[] {
 
 export function selectStatusesToOverride(statuses: CommitStatus[]): string[] {
   return statuses.filter((s) => s.state !== 'success').map((s) => s.context);
+}
+
+// The event payload is a snapshot from when the label was added. Re-check against the live PR so that removing
+// the label or closing the PR cancels an in-flight bypass.
+export async function recheckEligibility(
+  client: Pick<GitHubClient, 'getPullRequest'>,
+  pr: PullRequestInfo,
+  config: EligibilityConfig
+): Promise<Eligibility> {
+  const live = await client.getPullRequest(pr.number);
+  return checkEligibility({ ...pr, state: live.state, labels: live.labels }, config);
 }
 
 // --- Waiting for mergeability ---
@@ -182,7 +215,7 @@ export async function waitForMergeable(
 
 export type BypassClient = Pick<
   GitHubClient,
-  'listCheckRuns' | 'createSuccessCheckRun' | 'listCommitStatuses' | 'createSuccessCommitStatus' | 'getMergeableState' | 'mergePullRequest'
+  'listCheckRuns' | 'createSuccessCheckRun' | 'listCommitStatuses' | 'createSuccessCommitStatus' | 'getPullRequest' | 'getMergeableState' | 'mergePullRequest'
 >;
 
 export interface BypassDeps {
@@ -199,7 +232,7 @@ export interface BypassDeps {
 export type BypassResult = { status: 'skipped'; reason: string } | { status: 'merged'; sha: string };
 
 export async function runBypass({ client, approveClient, pr, config, log = () => {}, clock, backoff }: BypassDeps): Promise<BypassResult> {
-  log(`Evaluating PR #${pr.number} by ${pr.author} — labels: [${pr.labels.join(', ')}]`);
+  log(`Evaluating PR #${pr.number} by ${pr.author}, labeled by ${pr.sender} — labels: [${pr.labels.join(', ')}]`);
 
   const eligibility = checkEligibility(pr, config);
   if (!eligibility.eligible) {
@@ -238,11 +271,23 @@ export async function runBypass({ client, approveClient, pr, config, log = () =>
     }
   }
 
+  const beforeApprove = await recheckEligibility(client, pr, config);
+  if (!beforeApprove.eligible) {
+    log(`${beforeApprove.reason}. Aborting before approval.`);
+    return { status: 'skipped', reason: beforeApprove.reason };
+  }
+
   log(`Approving PR #${pr.number}`);
   await approveClient.approvePullRequest(pr.number);
 
   log(`Waiting for PR #${pr.number} to become mergeable...`);
   await waitForMergeable(client, pr.number, { clock, log, backoff });
+
+  const beforeMerge = await recheckEligibility(client, pr, config);
+  if (!beforeMerge.eligible) {
+    log(`${beforeMerge.reason}. Aborting before merge.`);
+    return { status: 'skipped', reason: beforeMerge.reason };
+  }
 
   log(`Merging PR #${pr.number} (method: ${config.mergeMethod})`);
   const result = await client.mergePullRequest(pr.number, config.mergeMethod);

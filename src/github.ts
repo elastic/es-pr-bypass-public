@@ -19,6 +19,11 @@ export interface MergeResult {
   sha: string;
 }
 
+export interface LivePullRequest {
+  state: string;
+  labels: string[];
+}
+
 export type MergeMethod = 'merge' | 'squash' | 'rebase';
 
 export class GitHubClient {
@@ -95,6 +100,11 @@ export class GitHubClient {
       context,
       description: 'Bypassed by pr-bypass action.',
     });
+  }
+
+  async getPullRequest(prNumber: number): Promise<LivePullRequest> {
+    const pr = await this.request<{ state: string; labels: { name: string }[] }>('GET', `/pulls/${prNumber}`);
+    return { state: pr.state, labels: pr.labels.map((l) => l.name) };
   }
 
   async getMergeableState(prNumber: number): Promise<string> {

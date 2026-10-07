@@ -34,9 +34,17 @@ function fakeClock(start = 0): Clock & { sleeps: number[] } {
 
 const BACKOFF: BackoffOptions = { timeoutMs: 60_000, initialIntervalMs: 1_000, maxIntervalMs: 5_000, backoffFactor: 2 };
 
-const PR: PullRequestInfo = { number: 42, author: 'bot', headSha: 'sha1', labels: ['auto-merge-bypass'], state: 'open' };
+const PR: PullRequestInfo = {
+  number: 42,
+  author: 'bot',
+  headSha: 'sha1',
+  labels: ['auto-merge-bypass'],
+  state: 'open',
+  triggerLabel: 'auto-merge-bypass',
+  sender: 'bot',
+};
 
-const CONFIG: Config = { allowedUsers: ['bot'], bypassLabel: 'auto-merge-bypass', requiredCommitStatuses: [], mergeMethod: 'squash' };
+const CONFIG: Config = { allowedUsers: ['bot'], allowedLabelers: ['bot', 'maintainer'], bypassLabel: 'auto-merge-bypass', requiredCommitStatuses: [], mergeMethod: 'squash' };
 
 describe('parseList', () => {
   it('splits, trims, and drops empty entries', () => {
@@ -51,11 +59,12 @@ describe('parseList', () => {
 describe('readInputs', () => {
   const base = { INPUT_TOKEN: 'tok', INPUT_ALLOWED_USERS: 'a, b' };
 
-  it('applies defaults and falls back approve-token to token', () => {
+  it('applies defaults and falls back approve-token to token and allowed-labelers to allowed-users', () => {
     expect(readInputs(base)).toEqual({
       token: 'tok',
       approveToken: 'tok',
       allowedUsers: ['a', 'b'],
+      allowedLabelers: ['a', 'b'],
       bypassLabel: 'auto-merge-bypass',
       requiredCommitStatuses: [],
       mergeMethod: 'squash',
@@ -66,12 +75,13 @@ describe('readInputs', () => {
     const inputs = readInputs({
       ...base,
       INPUT_APPROVE_TOKEN: 'approver',
+      INPUT_ALLOWED_LABELERS: 'alice, bob',
       INPUT_BYPASS_LABEL: 'go',
       INPUT_REQUIRED_COMMIT_STATUSES: 'ci, lint',
       INPUT_MERGE_METHOD: 'rebase',
     });
 
-    expect(inputs).toMatchObject({ approveToken: 'approver', bypassLabel: 'go', requiredCommitStatuses: ['ci', 'lint'], mergeMethod: 'rebase' });
+    expect(inputs).toMatchObject({ approveToken: 'approver', allowedLabelers: ['alice', 'bob'], bypassLabel: 'go', requiredCommitStatuses: ['ci', 'lint'], mergeMethod: 'rebase' });
   });
 
   it.each(['INPUT_TOKEN', 'INPUT_ALLOWED_USERS'])('throws when %s is missing', (key) => {
@@ -97,9 +107,25 @@ describe('parsePullRequest', () => {
   it('extracts the fields used by the action', () => {
     const event = {
       pull_request: { number: 5, user: { login: 'bot' }, head: { sha: 'abc' }, labels: [{ name: 'x' }, { name: 'y' }], state: 'open' },
+      label: { name: 'y' },
+      sender: { login: 'maintainer' },
     };
 
-    expect(parsePullRequest(event)).toEqual({ number: 5, author: 'bot', headSha: 'abc', labels: ['x', 'y'], state: 'open' });
+    expect(parsePullRequest(event)).toEqual({
+      number: 5,
+      author: 'bot',
+      headSha: 'abc',
+      labels: ['x', 'y'],
+      state: 'open',
+      triggerLabel: 'y',
+      sender: 'maintainer',
+    });
+  });
+
+  it('sets triggerLabel to null for non-labeled events', () => {
+    const event = { pull_request: { number: 5, user: { login: 'bot' }, head: { sha: 'abc' }, labels: [], state: 'open' } };
+
+    expect(parsePullRequest(event)?.triggerLabel).toBeNull();
   });
 
   it('returns null for non-PR events', () => {
@@ -122,6 +148,25 @@ describe('checkEligibility', () => {
 
   it('rejects a PR missing the bypass label', () => {
     expect(checkEligibility({ ...PR, labels: ['other'] }, CONFIG)).toEqual({ eligible: false, reason: expect.stringContaining('label') });
+  });
+
+  it('rejects a run triggered by adding a different label', () => {
+    expect(checkEligibility({ ...PR, labels: ['auto-merge-bypass', 'docs'], triggerLabel: 'docs' }, CONFIG)).toEqual({
+      eligible: false,
+      reason: expect.stringContaining('"docs"'),
+    });
+  });
+
+  it('rejects a run not triggered by a labeled event', () => {
+    expect(checkEligibility({ ...PR, triggerLabel: null }, CONFIG).eligible).toBe(false);
+  });
+
+  it('accepts the label being added by any allowed labeler', () => {
+    expect(checkEligibility({ ...PR, sender: 'maintainer' }, CONFIG)).toEqual({ eligible: true });
+  });
+
+  it('rejects the label being added by someone not in the allowed labelers list', () => {
+    expect(checkEligibility({ ...PR, sender: 'triager' }, CONFIG)).toEqual({ eligible: false, reason: expect.stringContaining('"triager"') });
   });
 
   it('matches the author case-sensitively', () => {
@@ -251,6 +296,7 @@ describe('runBypass', () => {
         ])
       ),
       createSuccessCommitStatus: vi.fn(record('createSuccessCommitStatus', undefined)),
+      getPullRequest: vi.fn(record('getPullRequest', { state: 'open', labels: ['auto-merge-bypass'] })),
       getMergeableState: vi.fn(record('getMergeableState', 'clean')),
       mergePullRequest: vi.fn(record('mergePullRequest', { merged: true, sha: 'merged-sha', message: '' })),
       ...overrides,
@@ -273,8 +319,10 @@ describe('runBypass', () => {
       'listCommitStatuses(sha1)',
       'createSuccessCommitStatus(sha1,ci/legacy)',
       'createSuccessCommitStatus(sha1,gate)',
+      'getPullRequest(42)',
       'approvePullRequest(42)',
       'getMergeableState(42)',
+      'getPullRequest(42)',
       'mergePullRequest(42,squash)',
     ]);
   });
@@ -291,6 +339,8 @@ describe('runBypass', () => {
     ['closed PR', { ...PR, state: 'closed' }],
     ['disallowed author', { ...PR, author: 'human' }],
     ['missing label', { ...PR, labels: [] }],
+    ['different trigger label', { ...PR, triggerLabel: 'docs' }],
+    ['disallowed labeler', { ...PR, sender: 'triager' }],
   ])('skips without touching the API for a %s', async (_, pr) => {
     const deps = setup();
 
@@ -298,6 +348,33 @@ describe('runBypass', () => {
 
     expect(result.status).toBe('skipped');
     expect(deps.calls).toEqual([]);
+  });
+
+  it.each([
+    ['the bypass label was removed', { state: 'open', labels: [] }],
+    ['the PR was closed', { state: 'closed', labels: ['auto-merge-bypass'] }],
+  ])('does not approve or merge if %s before approval', async (_, live) => {
+    const deps = setup({ getPullRequest: vi.fn(async () => live) });
+
+    const result = await runBypass({ ...deps, pr: PR, config: CONFIG, backoff: BACKOFF });
+
+    expect(result.status).toBe('skipped');
+    expect(deps.approveClient.approvePullRequest).not.toHaveBeenCalled();
+    expect(deps.client.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the bypass label was removed', { state: 'open', labels: ['other'] }],
+    ['the PR was closed', { state: 'closed', labels: ['auto-merge-bypass'] }],
+  ])('does not merge if %s while waiting', async (_, live) => {
+    const getPullRequest = vi.fn().mockResolvedValueOnce({ state: 'open', labels: ['auto-merge-bypass'] }).mockResolvedValueOnce(live);
+    const deps = setup({ getPullRequest });
+
+    const result = await runBypass({ ...deps, pr: PR, config: CONFIG, backoff: BACKOFF });
+
+    expect(result).toEqual({ status: 'skipped', reason: expect.any(String) });
+    expect(deps.approveClient.approvePullRequest).toHaveBeenCalled();
+    expect(deps.client.mergePullRequest).not.toHaveBeenCalled();
   });
 
   it('throws when the merge API reports merged: false', async () => {

@@ -22,6 +22,12 @@ inputs:
   allowed-users:
     description: 'Comma-separated list of GitHub usernames whose PRs can be bypassed'
     required: true
+  allowed-labelers:
+    description: >
+      Comma-separated list of GitHub usernames permitted to add the bypass label.
+      Defaults to `allowed-users` (i.e. only the automation itself can trigger a bypass).
+    required: false
+    default: ''
   bypass-label:
     description: 'Label that must be present on the PR to trigger the bypass'
     required: false
@@ -52,6 +58,7 @@ runs:
         INPUT_TOKEN: ${{ inputs.token }}
         INPUT_APPROVE_TOKEN: ${{ inputs.approve-token }}
         INPUT_ALLOWED_USERS: ${{ inputs.allowed-users }}
+        INPUT_ALLOWED_LABELERS: ${{ inputs.allowed-labelers }}
         INPUT_BYPASS_LABEL: ${{ inputs.bypass-label }}
         INPUT_REQUIRED_COMMIT_STATUSES: ${{ inputs.required-commit-statuses }}
         INPUT_MERGE_METHOD: ${{ inputs.merge-method }}
