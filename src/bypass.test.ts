@@ -296,7 +296,7 @@ describe('runBypass', () => {
         ])
       ),
       createSuccessCommitStatus: vi.fn(record('createSuccessCommitStatus', undefined)),
-      getPullRequest: vi.fn(record('getPullRequest', { state: 'open', labels: ['auto-merge-bypass'] })),
+      getPullRequest: vi.fn(record('getPullRequest', { state: 'open', labels: ['auto-merge-bypass'], headSha: 'sha1' })),
       getMergeableState: vi.fn(record('getMergeableState', 'clean')),
       mergePullRequest: vi.fn(record('mergePullRequest', { merged: true, sha: 'merged-sha', message: '' })),
       ...overrides,
@@ -320,10 +320,10 @@ describe('runBypass', () => {
       'createSuccessCommitStatus(sha1,ci/legacy)',
       'createSuccessCommitStatus(sha1,gate)',
       'getPullRequest(42)',
-      'approvePullRequest(42)',
+      'approvePullRequest(42,sha1)',
       'getMergeableState(42)',
       'getPullRequest(42)',
-      'mergePullRequest(42,squash)',
+      'mergePullRequest(42,squash,sha1)',
     ]);
   });
 
@@ -332,7 +332,7 @@ describe('runBypass', () => {
 
     await runBypass({ ...deps, pr: PR, config: { ...CONFIG, mergeMethod: 'rebase' }, backoff: BACKOFF });
 
-    expect(deps.client.mergePullRequest).toHaveBeenCalledWith(42, 'rebase');
+    expect(deps.client.mergePullRequest).toHaveBeenCalledWith(42, 'rebase', 'sha1');
   });
 
   it.each([
@@ -351,8 +351,9 @@ describe('runBypass', () => {
   });
 
   it.each([
-    ['the bypass label was removed', { state: 'open', labels: [] }],
-    ['the PR was closed', { state: 'closed', labels: ['auto-merge-bypass'] }],
+    ['the bypass label was removed', { state: 'open', labels: [], headSha: 'sha1' }],
+    ['the PR was closed', { state: 'closed', labels: ['auto-merge-bypass'], headSha: 'sha1' }],
+    ['a new commit was pushed', { state: 'open', labels: ['auto-merge-bypass'], headSha: 'sha2' }],
   ])('does not approve or merge if %s before approval', async (_, live) => {
     const deps = setup({ getPullRequest: vi.fn(async () => live) });
 
@@ -364,10 +365,11 @@ describe('runBypass', () => {
   });
 
   it.each([
-    ['the bypass label was removed', { state: 'open', labels: ['other'] }],
-    ['the PR was closed', { state: 'closed', labels: ['auto-merge-bypass'] }],
+    ['the bypass label was removed', { state: 'open', labels: ['other'], headSha: 'sha1' }],
+    ['the PR was closed', { state: 'closed', labels: ['auto-merge-bypass'], headSha: 'sha1' }],
+    ['a new commit was pushed', { state: 'open', labels: ['auto-merge-bypass'], headSha: 'sha2' }],
   ])('does not merge if %s while waiting', async (_, live) => {
-    const getPullRequest = vi.fn().mockResolvedValueOnce({ state: 'open', labels: ['auto-merge-bypass'] }).mockResolvedValueOnce(live);
+    const getPullRequest = vi.fn().mockResolvedValueOnce({ state: 'open', labels: ['auto-merge-bypass'], headSha: 'sha1' }).mockResolvedValueOnce(live);
     const deps = setup({ getPullRequest });
 
     const result = await runBypass({ ...deps, pr: PR, config: CONFIG, backoff: BACKOFF });

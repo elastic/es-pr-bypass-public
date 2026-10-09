@@ -22,6 +22,7 @@ export interface MergeResult {
 export interface LivePullRequest {
   state: string;
   labels: string[];
+  headSha: string;
 }
 
 export type MergeMethod = 'merge' | 'squash' | 'rebase';
@@ -103,8 +104,8 @@ export class GitHubClient {
   }
 
   async getPullRequest(prNumber: number): Promise<LivePullRequest> {
-    const pr = await this.request<{ state: string; labels: { name: string }[] }>('GET', `/pulls/${prNumber}`);
-    return { state: pr.state, labels: pr.labels.map((l) => l.name) };
+    const pr = await this.request<{ state: string; labels: { name: string }[]; head: { sha: string } }>('GET', `/pulls/${prNumber}`);
+    return { state: pr.state, labels: pr.labels.map((l) => l.name), headSha: pr.head.sha };
   }
 
   async getMergeableState(prNumber: number): Promise<string> {
@@ -112,14 +113,17 @@ export class GitHubClient {
     return pr.mergeable_state;
   }
 
-  async approvePullRequest(prNumber: number): Promise<void> {
+  // `commitId` pins the approval to that commit rather than whatever the head is when the request lands.
+  async approvePullRequest(prNumber: number, commitId: string): Promise<void> {
     await this.request('POST', `/pulls/${prNumber}/reviews`, {
+      commit_id: commitId,
       event: 'APPROVE',
       body: 'Auto-approved by pr-bypass action.',
     });
   }
 
-  async mergePullRequest(prNumber: number, mergeMethod: MergeMethod): Promise<MergeResult> {
-    return this.request('PUT', `/pulls/${prNumber}/merge`, { merge_method: mergeMethod });
+  // GitHub rejects the merge (409) if the PR head no longer matches `sha`.
+  async mergePullRequest(prNumber: number, mergeMethod: MergeMethod, sha: string): Promise<MergeResult> {
+    return this.request('PUT', `/pulls/${prNumber}/merge`, { merge_method: mergeMethod, sha });
   }
 }

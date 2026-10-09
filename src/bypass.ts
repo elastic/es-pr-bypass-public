@@ -124,13 +124,17 @@ export function selectStatusesToOverride(statuses: CommitStatus[]): string[] {
 }
 
 // The event payload is a snapshot from when the label was added. Re-check against the live PR so that removing
-// the label or closing the PR cancels an in-flight bypass.
+// the label, closing the PR, or pushing a new commit cancels an in-flight bypass.
 export async function recheckEligibility(
   client: Pick<GitHubClient, 'getPullRequest'>,
   pr: PullRequestInfo,
   config: EligibilityConfig
 ): Promise<Eligibility> {
   const live = await client.getPullRequest(pr.number);
+  // The label authorized the commit that was at the head when it was added — never anything pushed afterwards.
+  if (live.headSha !== pr.headSha) {
+    return { eligible: false, reason: `PR head moved from ${pr.headSha} to ${live.headSha} after the bypass label was added` };
+  }
   return checkEligibility({ ...pr, state: live.state, labels: live.labels }, config);
 }
 
@@ -278,7 +282,7 @@ export async function runBypass({ client, approveClient, pr, config, log = () =>
   }
 
   log(`Approving PR #${pr.number}`);
-  await approveClient.approvePullRequest(pr.number);
+  await approveClient.approvePullRequest(pr.number, pr.headSha);
 
   log(`Waiting for PR #${pr.number} to become mergeable...`);
   await waitForMergeable(client, pr.number, { clock, log, backoff });
@@ -290,7 +294,7 @@ export async function runBypass({ client, approveClient, pr, config, log = () =>
   }
 
   log(`Merging PR #${pr.number} (method: ${config.mergeMethod})`);
-  const result = await client.mergePullRequest(pr.number, config.mergeMethod);
+  const result = await client.mergePullRequest(pr.number, config.mergeMethod, pr.headSha);
   if (!result.merged) {
     throw new Error(`PR #${pr.number} merge failed: ${result.message}`);
   }

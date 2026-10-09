@@ -87,25 +87,25 @@ describe('GitHubClient write endpoints', () => {
     expect(body).toMatchObject({ state: 'success', context: 'ci/build' });
   });
 
-  it('approvePullRequest submits an APPROVE review', async () => {
+  it('approvePullRequest submits an APPROVE review pinned to the commit', async () => {
     const { client, fetchFn } = makeClient(jsonResponse({}));
 
-    await client.approvePullRequest(7);
+    await client.approvePullRequest(7, 'sha1');
 
     const { url, body } = call(fetchFn);
     expect(url).toMatch(/\/pulls\/7\/reviews$/);
-    expect(body).toMatchObject({ event: 'APPROVE' });
+    expect(body).toMatchObject({ event: 'APPROVE', commit_id: 'sha1' });
   });
 
-  it('mergePullRequest PUTs the merge method and returns the result', async () => {
+  it('mergePullRequest PUTs the merge method and expected head SHA and returns the result', async () => {
     const { client, fetchFn } = makeClient(jsonResponse({ merged: true, sha: 'm1', message: 'ok' }));
 
-    const result = await client.mergePullRequest(7, 'rebase');
+    const result = await client.mergePullRequest(7, 'rebase', 'sha1');
 
     const { url, init, body } = call(fetchFn);
     expect(url).toMatch(/\/pulls\/7\/merge$/);
     expect(init.method).toBe('PUT');
-    expect(body).toEqual({ merge_method: 'rebase' });
+    expect(body).toEqual({ merge_method: 'rebase', sha: 'sha1' });
     expect(result).toEqual({ merged: true, sha: 'm1', message: 'ok' });
   });
 });
@@ -125,10 +125,12 @@ describe('GitHubClient read endpoints', () => {
     expect(await client.getMergeableState(7)).toBe('clean');
   });
 
-  it('getPullRequest returns the live state and label names', async () => {
-    const { client, fetchFn } = makeClient(jsonResponse({ state: 'open', labels: [{ name: 'a' }, { name: 'b' }], mergeable_state: 'clean' }));
+  it('getPullRequest returns the live state, label names and head SHA', async () => {
+    const { client, fetchFn } = makeClient(
+      jsonResponse({ state: 'open', labels: [{ name: 'a' }, { name: 'b' }], head: { sha: 'sha1' }, mergeable_state: 'clean' })
+    );
 
-    expect(await client.getPullRequest(7)).toEqual({ state: 'open', labels: ['a', 'b'] });
+    expect(await client.getPullRequest(7)).toEqual({ state: 'open', labels: ['a', 'b'], headSha: 'sha1' });
     expect(call(fetchFn).url).toBe('https://api.github.com/repos/acme/widgets/pulls/7');
   });
 });
